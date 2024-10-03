@@ -60,7 +60,15 @@ defmodule Airbrakex.LoggerBackend do
   defp ignore_backend?(ignore, log) when is_function(ignore), do: ignore.(log)
 
   defp meet_level?(lvl, min) do
-    Logger.compare_levels(lvl, min) != :lt
+    Logger.compare_levels(normalize_level(lvl), normalize_level(min)) != :lt
+  end
+
+  defp normalize_level(:warn) do
+    :warning
+  end
+
+  defp normalize_level(any) do
+    any
   end
 
   defp post_event({Logger, msg, _ts, meta}, keys) do
