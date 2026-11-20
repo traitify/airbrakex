@@ -71,13 +71,31 @@ defmodule Airbrakex.LoggerBackend do
     any
   end
 
+  # Logger must never wait on Airbrake: the notice is built and sent in a
+  # supervised task. When the supervisor is at `max_children` (or is not
+  # running) the notice is dropped rather than queued.
   defp post_event({Logger, msg, _ts, meta}, keys) do
-    msg = IO.chardata_to_string(msg)
-    meta = take_into_map(meta, keys)
+    # Filtered here so the task is only sent the metadata it will report.
+    params = take_into_map(meta, keys)
+
+    Task.Supervisor.start_child(Airbrakex.TaskSupervisor, fn -> notify(msg, params) end)
+  catch
+    :exit, _reason -> :dropped
+  end
+
+  # Runs in the task. Nothing may escape it: a crash here would be logged as an
+  # error and come straight back to this backend as another notice.
+  defp notify(msg, params) do
+    Logger.metadata(airbrakex: false)
 
     msg
+    |> IO.chardata_to_string()
     |> LoggerParser.parse()
-    |> Notifier.notify(params: meta)
+    |> Notifier.notify(params: params)
+  rescue
+    _exception -> :error
+  catch
+    _kind, _reason -> :error
   end
 
   defp take_into_map(metadata, keys) do
