@@ -6,6 +6,9 @@ defmodule Airbrakex.Notifier do
   @request_headers [{"Content-Type", "application/json"}]
   @default_endpoint "https://airbrake.io"
   @default_env Mix.env()
+  # Connect and receive timeouts in ms. HTTPoison's defaults (8s / 5s) are far
+  # too long for an error reporter; override via `config :airbrakex, :http_options`.
+  @default_http_options [timeout: 1_000, recv_timeout: 1_000]
 
   @info %{
     name: "Airbrakex",
@@ -73,7 +76,7 @@ defmodule Airbrakex.Notifier do
   end
 
   defp http_options do
-    Config.get(:airbrakex, :http_options) || []
+    Keyword.merge(@default_http_options, Config.get(:airbrakex, :http_options) || [])
   end
 
   defp environment do

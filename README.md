@@ -71,6 +71,33 @@ config :logger,
   backends: [:console, Airbrakex.LoggerBackend]
 ```
 
+The backend never waits on Airbrake. Each notice is built and sent in a
+supervised task, off the Logger process, so a slow or unreachable Airbrake
+adds no latency to `Logger` calls. At most `max_concurrent_notices` notices
+(default 10) are in flight at once; notices beyond that are dropped, not queued.
+The value is read when the `:airbrakex` application starts.
+
+```elixir
+config :airbrakex,
+  max_concurrent_notices: 10
+```
+
+An explicit `Logger.flush/0` waits up to 2 seconds for notices still in
+flight, and so does stopping the `:airbrakex` application. To make sure an
+error logged right before shutdown is reported, call `Logger.flush/0` before
+stopping the VM: once the VM is stopping, new requests can no longer be started.
+
+Notices use hackney's shared default connection pool, so keep this well below
+that pool's size.
+
+Requests to Airbrake use a 1 second connect and receive timeout by default.
+Override them through `http_options`:
+
+```elixir
+config :airbrakex,
+  http_options: [timeout: 2_000, recv_timeout: 2_000]
+```
+
 ### Plug
 
 You can plug `Airbrakex.Plug` in your web application Plug stack to send all exception to Airbrake
