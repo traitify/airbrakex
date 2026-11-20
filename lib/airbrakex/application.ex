@@ -18,11 +18,31 @@ defmodule Airbrakex.Application do
 
   @impl true
   def start(_type, _args) do
+    # Children stop in reverse order, so NoticeDrain runs before the task
+    # supervisor kills whatever is still in flight.
     children = [
-      {Task.Supervisor, name: Airbrakex.TaskSupervisor, max_children: max_concurrent_notices()}
+      {Task.Supervisor, name: Airbrakex.TaskSupervisor, max_children: max_concurrent_notices()},
+      Airbrakex.NoticeDrain
     ]
 
     Supervisor.start_link(children, strategy: :one_for_one, name: Airbrakex.Supervisor)
+  end
+
+  @doc """
+  Waits up to `timeout_ms` for in-flight logger notices to finish.
+
+  Returns `:ok` once none are left, or `:timeout` if some were still running.
+  """
+  @spec drain_notices(non_neg_integer()) :: :ok | :timeout
+  def drain_notices(timeout_ms) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+
+    Airbrakex.TaskSupervisor
+    |> Task.Supervisor.children()
+    |> Enum.map(&Process.monitor/1)
+    |> await_down(deadline)
+  catch
+    :exit, _reason -> :ok
   end
 
   @doc """
@@ -36,6 +56,18 @@ defmodule Airbrakex.Application do
     :airbrakex
     |> Application.get_env(:max_concurrent_notices)
     |> validate_max_concurrent_notices()
+  end
+
+  defp await_down([], _deadline), do: :ok
+
+  defp await_down([ref | refs], deadline) do
+    receive do
+      {:DOWN, ^ref, :process, _pid, _reason} -> await_down(refs, deadline)
+    after
+      max(deadline - System.monotonic_time(:millisecond), 0) ->
+        Enum.each([ref | refs], &Process.demonitor(&1, [:flush]))
+        :timeout
+    end
   end
 
   defp validate_max_concurrent_notices(max) when is_integer(max) and max > 0, do: max

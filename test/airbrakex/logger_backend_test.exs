@@ -115,6 +115,54 @@ defmodule Airbrakex.LoggerBackendTest do
     assert {:ok, @state} = LoggerBackend.handle_event(error_event("no supervisor"), @state)
   end
 
+  test "stopping the application waits for in-flight notices", %{bypass: bypass} do
+    test_pid = self()
+
+    Bypass.expect_once(bypass, fn conn ->
+      Process.sleep(300)
+      send(test_pid, :notice_delivered)
+      Plug.Conn.resp(conn, 201, "")
+    end)
+
+    LoggerBackend.handle_event(error_event("logged just before shutdown"), @state)
+
+    # NoticeDrain is the first child the supervisor stops on shutdown.
+    on_exit(fn -> Supervisor.restart_child(Airbrakex.Supervisor, Airbrakex.NoticeDrain) end)
+    :ok = Supervisor.terminate_child(Airbrakex.Supervisor, Airbrakex.NoticeDrain)
+
+    assert_received :notice_delivered
+  end
+
+  test "an explicit flush waits for in-flight notices", %{bypass: bypass} do
+    test_pid = self()
+
+    Bypass.expect_once(bypass, fn conn ->
+      Process.sleep(300)
+      send(test_pid, :notice_delivered)
+      Plug.Conn.resp(conn, 201, "")
+    end)
+
+    LoggerBackend.handle_event(error_event("logged just before a flush"), @state)
+
+    assert {:ok, @state} = LoggerBackend.handle_event(:flush, @state)
+    assert_received :notice_delivered
+  end
+
+  test "draining in-flight notices is bounded", %{bypass: bypass} do
+    Bypass.expect_once(bypass, fn conn ->
+      Process.sleep(500)
+      Plug.Conn.resp(conn, 201, "")
+    end)
+
+    LoggerBackend.handle_event(error_event("slow notice"), @state)
+
+    {elapsed_ms, result} = timed(fn -> Airbrakex.Application.drain_notices(50) end)
+
+    assert result == :timeout
+    assert elapsed_ms < 400
+    wait_for_notices()
+  end
+
   defp error_event(message) do
     {:error, Process.group_leader(), {Logger, message, {{2026, 11, 20}, {0, 0, 0, 0}}, []}}
   end
@@ -124,8 +172,13 @@ defmodule Airbrakex.LoggerBackendTest do
   end
 
   defp timed_ms(fun) do
-    {microseconds, _result} = :timer.tc(fun)
-    div(microseconds, 1_000)
+    {elapsed_ms, _result} = timed(fun)
+    elapsed_ms
+  end
+
+  defp timed(fun) do
+    {microseconds, result} = :timer.tc(fun)
+    {div(microseconds, 1_000), result}
   end
 
   defp wait_for_notices do

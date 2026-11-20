@@ -82,6 +82,11 @@ config :airbrakex,
   max_concurrent_notices: 10
 ```
 
+An explicit `Logger.flush/0` waits up to 2 seconds for notices still in
+flight, and so does stopping the `:airbrakex` application. To make sure an
+error logged right before shutdown is reported, call `Logger.flush/0` before
+stopping the VM: once the VM is stopping, new requests can no longer be started.
+
 Notices use hackney's shared default connection pool, so keep this well below
 that pool's size.
 

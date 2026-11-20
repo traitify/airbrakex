@@ -14,6 +14,9 @@ defmodule Airbrakex.LoggerBackend do
 
   alias Airbrakex.{LoggerParser, Notifier}
 
+  # Covers one notice at the default 1s connect + 1s receive timeouts.
+  @flush_timeout_ms 2_000
+
   def init(__MODULE__) do
     {:ok, configure([])}
   end
@@ -34,7 +37,11 @@ defmodule Airbrakex.LoggerBackend do
     {:ok, state}
   end
 
+  # An explicit `Logger.flush/0` is a request to wait, typically right before
+  # the VM stops, so let in-flight notices finish. Bounded; ordinary logging
+  # never goes through here.
   def handle_event(:flush, state) do
+    Airbrakex.Application.drain_notices(@flush_timeout_ms)
     {:ok, state}
   end
 
@@ -92,9 +99,8 @@ defmodule Airbrakex.LoggerBackend do
     |> IO.chardata_to_string()
     |> LoggerParser.parse()
     |> Notifier.notify(params: params)
-  rescue
-    _exception -> :error
   catch
+    # Catches raised exceptions (kind `:error`) as well as exits and throws.
     _kind, _reason -> :error
   end
 
