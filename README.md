@@ -98,7 +98,14 @@ With it set, `Logger.flush/0` waits up to 2 seconds for notices in flight.
 Leave it unset in `config/test.exs`, or better, do not attach the backend in test.
 
 A notice that has not finished after `notice_deadline` (default 5000 ms) is
-stopped, so a trickling Airbrake cannot hold a slot indefinitely.
+stopped, so a trickling Airbrake cannot hold a slot indefinitely. The value
+must be a positive integer of milliseconds; anything else (a string read from
+an env var, `:infinity`, zero, a negative number) falls back to the default.
+
+```elixir
+config :airbrakex,
+  notice_deadline: 5_000
+```
 
 Dropped notices are counted. `Airbrakex.dropped_notices/0` returns the number
 dropped since the application started; export it as a metric to see when

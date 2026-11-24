@@ -196,6 +196,18 @@ defmodule Airbrakex.LoggerBackendTest do
     :gen_tcp.close(listen)
   end
 
+  test "an invalid notice_deadline falls back to the default" do
+    default = LoggerBackend.notice_deadline()
+
+    Enum.each(["5000", :infinity, -1, 0, 1.5], fn invalid ->
+      Application.put_env(:airbrakex, :notice_deadline, invalid)
+      assert LoggerBackend.notice_deadline() == default
+    end)
+
+    Application.put_env(:airbrakex, :notice_deadline, 250)
+    assert LoggerBackend.notice_deadline() == 250
+  end
+
   test "draining in-flight notices is bounded", %{bypass: bypass} do
     Bypass.expect_once(bypass, fn conn ->
       Process.sleep(500)

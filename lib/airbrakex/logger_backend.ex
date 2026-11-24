@@ -119,10 +119,21 @@ defmodule Airbrakex.LoggerBackend do
   # task supervisor reports any other abnormal exit at `:error` level, which
   # this backend would pick up as a new notice.
   defp start_deadline do
-    :airbrakex
-    |> Application.get_env(:notice_deadline, @default_notice_deadline_ms)
-    |> :timer.exit_after(self(), {:shutdown, :airbrakex_deadline})
+    :timer.exit_after(notice_deadline(), self(), {:shutdown, :airbrakex_deadline})
   end
+
+  @doc false
+  # `:timer.exit_after/3` returns `{:error, :badarg}` for a bad time instead of
+  # raising, so an invalid `notice_deadline` would silently turn the deadline off.
+  @spec notice_deadline() :: pos_integer()
+  def notice_deadline do
+    :airbrakex
+    |> Application.get_env(:notice_deadline)
+    |> validate_notice_deadline()
+  end
+
+  defp validate_notice_deadline(ms) when is_integer(ms) and ms > 0, do: ms
+  defp validate_notice_deadline(_invalid), do: @default_notice_deadline_ms
 
   defp drain_on_flush(true), do: Airbrakex.Application.drain_notices(@flush_timeout_ms)
   defp drain_on_flush(_disabled), do: :ok
