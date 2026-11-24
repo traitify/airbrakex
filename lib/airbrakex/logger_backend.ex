@@ -12,10 +12,14 @@ defmodule Airbrakex.LoggerBackend do
 
   @behaviour :gen_event
 
-  alias Airbrakex.{LoggerParser, Notifier}
+  alias Airbrakex.{DroppedNotices, LoggerParser, Notifier}
 
-  # Covers one notice at the default 1s connect + 1s receive timeouts.
+  # Tighter than the Notifier defaults: a notice task holds one of a small
+  # number of slots. `config :airbrakex, :http_options` still overrides these.
+  @http_options [timeout: 1_000, recv_timeout: 1_000]
+  # Covers one notice at the 1s connect + 1s receive timeouts above.
   @flush_timeout_ms 2_000
+  @default_notice_deadline_ms 5_000
 
   def init(__MODULE__) do
     {:ok, configure([])}
@@ -37,11 +41,11 @@ defmodule Airbrakex.LoggerBackend do
     {:ok, state}
   end
 
-  # An explicit `Logger.flush/0` is a request to wait, typically right before
-  # the VM stops, so let in-flight notices finish. Bounded; ordinary logging
-  # never goes through here.
+  # With `drain_on_flush: true`, an explicit `Logger.flush/0` lets in-flight
+  # notices finish (bounded). Opt-in because a flush blocks every Logger
+  # backend while it waits, and `ExUnit.CaptureLog` flushes after each capture.
   def handle_event(:flush, state) do
-    Airbrakex.Application.drain_notices(@flush_timeout_ms)
+    drain_on_flush(Application.get_env(:airbrakex, :drain_on_flush, false))
     {:ok, state}
   end
 
@@ -85,24 +89,43 @@ defmodule Airbrakex.LoggerBackend do
     # Filtered here so the task is only sent the metadata it will report.
     params = take_into_map(meta, keys)
 
-    Task.Supervisor.start_child(Airbrakex.TaskSupervisor, fn -> notify(msg, params) end)
+    Airbrakex.TaskSupervisor
+    |> Task.Supervisor.start_child(fn -> notify(msg, params) end)
+    |> count_drop()
   catch
-    :exit, _reason -> :dropped
+    :exit, _reason -> DroppedNotices.increment()
   end
+
+  defp count_drop({:ok, _pid}), do: :ok
+  defp count_drop({:error, _reason}), do: DroppedNotices.increment()
 
   # Runs in the task. Nothing may escape it: a crash here would be logged as an
   # error and come straight back to this backend as another notice.
   defp notify(msg, params) do
     Logger.metadata(airbrakex: false)
+    start_deadline()
 
     msg
     |> IO.chardata_to_string()
     |> LoggerParser.parse()
-    |> Notifier.notify(params: params)
+    |> Notifier.notify(params: params, http_options: @http_options)
   catch
     # Catches raised exceptions (kind `:error`) as well as exits and throws.
     _kind, _reason -> :error
   end
+
+  # The HTTP timeouts only bound gaps between packets, so a trickling Airbrake
+  # could hold a slot indefinitely. The `{:shutdown, _}` reason matters: the
+  # task supervisor reports any other abnormal exit at `:error` level, which
+  # this backend would pick up as a new notice.
+  defp start_deadline do
+    :airbrakex
+    |> Application.get_env(:notice_deadline, @default_notice_deadline_ms)
+    |> :timer.exit_after(self(), {:shutdown, :airbrakex_deadline})
+  end
+
+  defp drain_on_flush(true), do: Airbrakex.Application.drain_notices(@flush_timeout_ms)
+  defp drain_on_flush(_disabled), do: :ok
 
   defp take_into_map(metadata, keys) do
     Enum.reduce(metadata, %{}, fn {key, val}, acc ->

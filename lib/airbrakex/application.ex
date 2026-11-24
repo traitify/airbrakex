@@ -18,6 +18,8 @@ defmodule Airbrakex.Application do
 
   @impl true
   def start(_type, _args) do
+    Airbrakex.DroppedNotices.init()
+
     # Children stop in reverse order, so NoticeDrain runs before the task
     # supervisor kills whatever is still in flight.
     children = [

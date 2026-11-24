@@ -82,16 +82,34 @@ config :airbrakex,
   max_concurrent_notices: 10
 ```
 
-An explicit `Logger.flush/0` waits up to 2 seconds for notices still in
-flight, and so does stopping the `:airbrakex` application. To make sure an
-error logged right before shutdown is reported, call `Logger.flush/0` before
-stopping the VM: once the VM is stopping, new requests can no longer be started.
+When the `:airbrakex` application stops, it waits up to 2 seconds for notices
+already in flight. Once the VM is stopping, new requests can no longer be
+started, so an error logged immediately before shutdown is only reported if
+the service flushes first. That wait is opt-in, because a flush blocks every
+Logger backend while it waits and `ExUnit.CaptureLog` flushes after each capture:
 
-Notices use hackney's shared default connection pool, so keep this well below
-that pool's size.
+```elixir
+# e.g. config/prod.exs
+config :airbrakex,
+  drain_on_flush: true
+```
 
-Requests to Airbrake use a 1 second connect and receive timeout by default.
-Override them through `http_options`:
+With it set, `Logger.flush/0` waits up to 2 seconds for notices in flight.
+Leave it unset in `config/test.exs`, or better, do not attach the backend in test.
+
+A notice that has not finished after `notice_deadline` (default 5000 ms) is
+stopped, so a trickling Airbrake cannot hold a slot indefinitely.
+
+Dropped notices are counted. `Airbrakex.dropped_notices/0` returns the number
+dropped since the application started; export it as a metric to see when
+Airbrake is under-reporting.
+
+Notices use hackney's shared default connection pool, so keep
+`max_concurrent_notices` well below that pool's size.
+
+Logger notices use a 1 second connect and receive timeout.
+`Airbrakex.notify/2` and `Airbrakex.Plug`, which send in the caller's process,
+use 3 seconds. `http_options` overrides both:
 
 ```elixir
 config :airbrakex,
