@@ -71,6 +71,58 @@ config :logger,
   backends: [:console, Airbrakex.LoggerBackend]
 ```
 
+The backend never waits on Airbrake. Each notice is built and sent in a
+supervised task, off the Logger process, so a slow or unreachable Airbrake
+adds no latency to `Logger` calls. At most `max_concurrent_notices` notices
+(default 10) are in flight at once; notices beyond that are dropped, not queued.
+The value is read when the `:airbrakex` application starts.
+
+```elixir
+config :airbrakex,
+  max_concurrent_notices: 10
+```
+
+When the `:airbrakex` application stops, it waits up to 2 seconds for notices
+already in flight. Once the VM is stopping, new requests can no longer be
+started, so an error logged immediately before shutdown is only reported if
+the service flushes first. That wait is opt-in, because a flush blocks every
+Logger backend while it waits and `ExUnit.CaptureLog` flushes after each capture:
+
+```elixir
+# e.g. config/prod.exs
+config :airbrakex,
+  drain_on_flush: true
+```
+
+With it set, `Logger.flush/0` waits up to 2 seconds for notices in flight.
+Leave it unset in `config/test.exs`, or better, do not attach the backend in test.
+
+A notice that has not finished after `notice_deadline` (default 5000 ms) is
+stopped, so a trickling Airbrake cannot hold a slot indefinitely. The value
+must be a positive integer of milliseconds; anything else (a string read from
+an env var, `:infinity`, zero, a negative number) falls back to the default.
+
+```elixir
+config :airbrakex,
+  notice_deadline: 5_000
+```
+
+Dropped notices are counted. `Airbrakex.dropped_notices/0` returns the number
+dropped since the application started; export it as a metric to see when
+Airbrake is under-reporting.
+
+Notices use hackney's shared default connection pool, so keep
+`max_concurrent_notices` well below that pool's size.
+
+Logger notices use a 1 second connect and receive timeout.
+`Airbrakex.notify/2` and `Airbrakex.Plug`, which send in the caller's process,
+use 3 seconds. `http_options` overrides both:
+
+```elixir
+config :airbrakex,
+  http_options: [timeout: 2_000, recv_timeout: 2_000]
+```
+
 ### Plug
 
 You can plug `Airbrakex.Plug` in your web application Plug stack to send all exception to Airbrake

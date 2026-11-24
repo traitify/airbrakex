@@ -4,8 +4,8 @@ defmodule Airbrakex.Mixfile do
   def project do
     [
       app: :airbrakex,
-      version: "0.1.9",
-      elixir: "~> 1.0",
+      version: "0.2.0",
+      elixir: "~> 1.14",
       description: "Airbrake Elixir Notifier",
       package: package(),
       deps: deps(),
@@ -27,7 +27,8 @@ defmodule Airbrakex.Mixfile do
 
   def application() do
     [
-      applications: [:httpoison]
+      extra_applications: [:logger],
+      mod: {Airbrakex.Application, []}
     ]
   end
 
@@ -35,7 +36,10 @@ defmodule Airbrakex.Mixfile do
     [
       {:httpoison, "~> 2.2"},
       {:jason, "~> 1.1"},
-      {:bypass, "~> 0.8", only: :test},
+      {:bypass, "~> 2.1", only: :test},
+      # cowlib >= 2.20 needs OTP 27; services run OTP 26.
+      {:cowboy, "~> 2.18.0", only: :test},
+      {:cowlib, "~> 2.19.0", only: :test, override: true},
       {:ex_doc, ">= 0.0.0", only: :dev},
       {:credo, "~> 1.0.0", only: :dev, runtime: false},
       {:dialyxir, "~> 1.0.0-rc.4", only: :dev, runtime: false}

@@ -6,6 +6,10 @@ defmodule Airbrakex.Notifier do
   @request_headers [{"Content-Type", "application/json"}]
   @default_endpoint "https://airbrake.io"
   @default_env Mix.env()
+  # Connect and receive timeouts in ms for callers that send in their own
+  # process (`Airbrakex.notify/2`, `Airbrakex.Plug`). A caller may pass tighter
+  # `http_options:`; `config :airbrakex, :http_options` overrides both.
+  @default_http_options [timeout: 3_000, recv_timeout: 3_000]
 
   @info %{
     name: "Airbrakex",
@@ -25,7 +29,7 @@ defmodule Airbrakex.Notifier do
         |> add(:environment, Keyword.get(options, :environment, %{}))
         |> Jason.encode!()
 
-      post(url(), payload, @request_headers, http_options())
+      post(url(), payload, @request_headers, http_options(options))
     end
   end
 
@@ -72,8 +76,10 @@ defmodule Airbrakex.Notifier do
     "#{endpoint}/api/v3/projects/#{project_id}/notices?key=#{project_key}"
   end
 
-  defp http_options do
-    Config.get(:airbrakex, :http_options) || []
+  defp http_options(options) do
+    @default_http_options
+    |> Keyword.merge(Keyword.get(options, :http_options, []))
+    |> Keyword.merge(Config.get(:airbrakex, :http_options) || [])
   end
 
   defp environment do

@@ -192,4 +192,21 @@ defmodule Airbrakex.NotifierTest do
     Airbrakex.Notifier.notify(error)
     Application.delete_env(:airbrakex, :http_options)
   end
+
+  test "accepts per-call http_options, which config overrides", %{bypass: bypass, error: error} do
+    Application.put_env(:airbrakex, :http_options, recv_timeout: 2_000)
+    on_exit(fn -> Application.delete_env(:airbrakex, :http_options) end)
+
+    Bypass.expect_once(bypass, fn conn ->
+      assert "key=#{@project_key}&from=call" == conn.query_string
+      Process.sleep(300)
+      Plug.Conn.resp(conn, 200, "")
+    end)
+
+    # The per-call 50ms recv_timeout would fail this request; config's 2s wins.
+    assert {:ok, %HTTPoison.Response{status_code: 200}} =
+             Airbrakex.Notifier.notify(error,
+               http_options: [params: [from: "call"], recv_timeout: 50]
+             )
+  end
 end

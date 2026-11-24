@@ -72,4 +72,13 @@ defmodule Airbrakex do
     |> ExceptionParser.parse()
     |> Notifier.notify(options)
   end
+
+  @doc """
+  Number of `Airbrakex.LoggerBackend` notices dropped since the application
+  started, because `max_concurrent_notices` were already in flight.
+
+  Export it as a metric to see when Airbrake is under-reporting.
+  """
+  @spec dropped_notices() :: non_neg_integer()
+  defdelegate dropped_notices, to: Airbrakex.DroppedNotices, as: :count
 end
